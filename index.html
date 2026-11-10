@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>深空方舟 · DEEP SPACE ARK — 太阳系空间站巡航</title>
+<style>
+  :root{
+    --cyan:#7ef3ff; --cyan-dim:#3aa9bb; --amber:#ffb45c; --amber-dim:#8a5a25;
+    --ink:#02060c; --panel:rgba(6,16,26,.62); --line:rgba(126,243,255,.28);
+    --mono:'Consolas','SF Mono','JetBrains Mono','Courier New',monospace;
+    --sans:system-ui,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--ink);overflow:hidden;color:#cfeaf2;font-family:var(--mono)}
+  #stage{position:fixed;inset:0}
+  #stage canvas{display:block;width:100%;height:100%}
+  .hidden{opacity:0!important;pointer-events:none!important}
+  .off{display:none!important}
+
+  /* ── 全屏装饰层 ─────────────────────────────── */
+  #vignette{position:fixed;inset:0;pointer-events:none;z-index:5;
+    background:radial-gradient(ellipse at 50% 48%,transparent 42%,rgba(0,0,0,.55) 100%);
+    mix-blend-mode:multiply}
+  #scanlines{position:fixed;inset:0;pointer-events:none;z-index:6;opacity:.22;
+    background:repeating-linear-gradient(to bottom,rgba(160,235,255,.07) 0 1px,transparent 1px 3px)}
+  #letterbox .bar{position:fixed;left:0;right:0;height:6vh;background:#000;z-index:7;pointer-events:none;
+    transition:height .9s cubic-bezier(.2,.8,.2,1)}
+  #letterbox .bar.top{top:0} #letterbox .bar.bottom{bottom:0}
+
+  /* ── HUD ─────────────────────────────────────── */
+  #hud{position:fixed;inset:0;z-index:8;pointer-events:none;transition:opacity .6s ease}
+  .frame{position:absolute;width:26px;height:26px;border:1px solid var(--line)}
+  .frame.tl{top:16px;left:16px;border-right:0;border-bottom:0}
+  .frame.tr{top:16px;right:16px;border-left:0;border-bottom:0}
+  .frame.bl{bottom:16px;left:16px;border-right:0;border-top:0}
+  .frame.br{bottom:16px;right:16px;border-left:0;border-top:0}
+
+  .tag{font-size:10px;letter-spacing:.34em;text-transform:uppercase;color:var(--cyan-dim)}
+  .val{font-size:12px;letter-spacing:.12em;color:var(--cyan)}
+  .rule{height:1px;background:linear-gradient(90deg,var(--line),transparent);margin:6px 0 8px}
+
+  /* 左上：品牌 */
+  #hud-brand{position:absolute;top:22px;left:44px}
+  #hud-brand b{display:block;font:600 15px/1 var(--mono);letter-spacing:.42em;color:#eafcff;
+    text-shadow:0 0 18px rgba(126,243,255,.65)}
+  #hud-brand span{display:block;margin-top:7px;font-size:10px;letter-spacing:.3em;color:var(--cyan-dim)}
+
+  /* 右上：遥测 */
+  #hud-telemetry{position:absolute;top:22px;right:44px;text-align:right;font-size:11px;line-height:1.9}
+  #hud-telemetry .row{display:flex;gap:14px;justify-content:flex-end;align-items:baseline}
+  #hud-telemetry .k{font-size:9px;letter-spacing:.26em;color:rgba(126,243,255,.42)}
+  #hud-telemetry .v{color:var(--cyan);min-width:74px}
+  #fps{color:var(--amber)}
+
+  /* 模式徽标 */
+  #mode-badge{position:absolute;left:44px;top:78px;display:flex;align-items:center;gap:10px}
+  #mode-badge .dot{width:6px;height:6px;border-radius:50%;background:var(--cyan);
+    box-shadow:0 0 12px var(--cyan);animation:pulse 2.2s infinite ease-in-out}
+  #mode-badge .txt{font-size:11px;letter-spacing:.28em;color:#bff4ff}
+  @keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}
+
+  /* 右中：空间站结构面板 */
+  #station-panel{position:absolute;right:44px;top:120px;width:296px;padding:16px 16px 14px;
+    background:var(--panel);border:1px solid var(--line);backdrop-filter:blur(6px);
+    clip-path:polygon(0 0,100% 0,100% calc(100% - 14px),calc(100% - 14px) 100%,0 100%);
+    pointer-events:auto;transition:transform .5s ease,opacity .5s ease}
+  #station-panel h2{margin:0;font:600 12px/1.4 var(--sans);letter-spacing:.18em;color:#e6fbff}
+  #station-panel .sub{font-size:9px;letter-spacing:.3em;color:var(--cyan-dim);margin-top:4px}
+  #module-list{margin:12px -4px 10px;max-height:min(34vh,288px);overflow:auto;padding-right:4px;
+    -webkit-mask-image:linear-gradient(to bottom,#000 0,#000 calc(100% - 24px),transparent 100%);
+    mask-image:linear-gradient(to bottom,#000 0,#000 calc(100% - 24px),transparent 100%)}
+  #module-list::-webkit-scrollbar{width:2px}
+  #module-list::-webkit-scrollbar-thumb{background:var(--cyan-dim)}
+  .mod{display:flex;align-items:center;gap:8px;padding:6px 8px;margin:2px 0;cursor:pointer;
+    border-left:2px solid transparent;transition:all .16s ease;font-size:11px;color:#9fd3e0}
+  .mod:hover,.mod.on{background:rgba(126,243,255,.09);border-left-color:var(--cyan);color:#e8fdff}
+  .mod .id{font-size:9px;color:var(--cyan-dim);min-width:26px}
+  .mod .nm{flex:1;letter-spacing:.08em;font-family:var(--sans)}
+  .mod .st{font-size:9px;letter-spacing:.14em;color:var(--amber);opacity:.75}
+  .mod.gone{color:rgba(159,211,224,.35)}
+  .mod.gone .st{color:var(--cyan-dim)}
+
+  .btn{pointer-events:auto;display:block;width:100%;margin-top:8px;padding:9px 10px;
+    font:600 11px/1 var(--mono);letter-spacing:.22em;color:#d8fbff;cursor:pointer;
+    background:linear-gradient(180deg,rgba(126,243,255,.16),rgba(126,243,255,.04));
+    border:1px solid rgba(126,243,255,.45);transition:all .18s ease;text-align:center;
+    clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)}
+  .btn:hover{background:rgba(126,243,255,.28);color:#fff;box-shadow:0 0 26px rgba(126,243,255,.35) inset}
+  .btn.amber{color:#ffe3c0;border-color:rgba(255,180,92,.55);
+    background:linear-gradient(180deg,rgba(255,180,92,.18),rgba(255,180,92,.04))}
+  .btn.amber:hover{background:rgba(255,180,92,.3)}
+  .btn.ghost{opacity:.6;font-weight:400;letter-spacing:.16em}
+
+  /* 左下：雷达 */
+  #radar-wrap{position:absolute;left:44px;bottom:42px;width:186px}
+  #radar{width:186px;height:186px;display:block;opacity:.92}
+  #radar-wrap .cap{font-size:9px;letter-spacing:.28em;color:var(--cyan-dim);margin-top:6px;text-align:center}
+
+  /* 右下：飞行仪表 */
+  #flight-panel{position:absolute;right:44px;bottom:42px;width:300px;opacity:0;transition:opacity .5s ease}
+  #flight-panel .lbl{display:flex;justify-content:space-between;font-size:9px;letter-spacing:.26em;color:var(--cyan-dim)}
+  #flight-panel .lbl b{color:var(--cyan);font-weight:400;letter-spacing:.1em}
+  .bar{height:4px;margin:6px 0 12px;background:rgba(126,243,255,.12);overflow:hidden}
+  .bar i{display:block;height:100%;width:0%;background:linear-gradient(90deg,var(--cyan-dim),var(--cyan));
+    box-shadow:0 0 14px rgba(126,243,255,.8);transition:width .12s linear}
+  .bar.amber i{background:linear-gradient(90deg,#7a4a1d,var(--amber));box-shadow:0 0 14px rgba(255,180,92,.8)}
+
+  /* 准星 */
+  #reticle{position:absolute;left:50%;top:50%;width:120px;height:120px;transform:translate(-50%,-50%);
+    opacity:0;transition:opacity .5s ease}
+  #reticle svg{width:100%;height:100%}
+  #target-lock{position:absolute;left:50%;top:calc(50% + 96px);transform:translateX(-50%);
+    text-align:center;opacity:0;transition:opacity .4s ease}
+  #target-lock .tn{font-size:13px;letter-spacing:.34em;color:var(--amber);font-family:var(--sans)}
+  #target-lock .td{font-size:10px;letter-spacing:.24em;color:rgba(255,180,92,.65);margin-top:5px}
+
+  /* 底部提示 */
+  #hints{position:absolute;left:50%;bottom:34px;transform:translateX(-50%);text-align:center;
+    font-size:10px;letter-spacing:.2em;color:rgba(159,211,224,.5);white-space:nowrap}
+  #hints kbd{font:inherit;color:#d6f8ff;border:1px solid rgba(126,243,255,.35);border-radius:2px;
+    padding:2px 6px;margin:0 3px;background:rgba(126,243,255,.07)}
+
+  /* 悬浮检视卡 */
+  #inspect{position:absolute;pointer-events:none;width:250px;padding:12px 14px;opacity:0;
+    background:rgba(4,12,20,.82);border:1px solid var(--line);backdrop-filter:blur(4px);
+    transform:translate(14px,14px);transition:opacity .18s ease}
+  #inspect .in-id{font-size:9px;letter-spacing:.3em;color:var(--cyan-dim)}
+  #inspect .in-nm{font:600 14px/1.5 var(--sans);letter-spacing:.1em;color:#f0feff;margin:3px 0}
+  #inspect .in-desc{font-size:10px;line-height:1.75;color:#9fc4d0;font-family:var(--sans)}
+  #inspect .in-stat{margin-top:8px;font-size:9px;letter-spacing:.18em;color:var(--amber)}
+
+  /* 提示浮条 */
+  #toasts{position:absolute;left:50%;top:16vh;transform:translateX(-50%);text-align:center;width:80vw}
+  .toast{font-size:11px;letter-spacing:.26em;color:var(--cyan);margin:6px 0;
+    text-shadow:0 0 18px rgba(126,243,255,.6);animation:toastin .4s ease both}
+  .toast.amber{color:var(--amber);text-shadow:0 0 18px rgba(255,180,92,.6)}
+  @keyframes toastin{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+
+  /* 跃迁闪光 */
+  #warp-flash{position:fixed;inset:0;z-index:9;pointer-events:none;opacity:0;
+    background:radial-gradient(circle at 50% 50%,rgba(190,245,255,.95),rgba(40,120,255,.35) 45%,transparent 72%)}
+  #warp-flash.on{animation:warpflash 1s ease-out}
+  @keyframes warpflash{0%{opacity:0}12%{opacity:1}100%{opacity:0}}
+  #fade{position:fixed;inset:0;background:#000;z-index:20;opacity:0;pointer-events:none;
+    transition:opacity 1s ease}
+
+  /* ── 标题页 ─────────────────────────────────── */
+  #title{position:fixed;inset:0;z-index:15;display:flex;flex-direction:column;align-items:flex-start;
+    justify-content:center;text-align:left;padding-left:clamp(24px,8.5vw,160px);
+    transition:opacity 1.1s ease;
+    background:linear-gradient(100deg,rgba(1,4,8,.94) 0%,rgba(2,7,14,.70) 34%,rgba(2,7,14,.22) 62%,rgba(1,4,8,.05) 86%)}
+  #title .kick{font-size:10px;letter-spacing:.62em;color:var(--cyan-dim);margin-bottom:26px}
+  #title h1{margin:0;font:200 clamp(38px,6.4vw,86px)/1.05 var(--sans);letter-spacing:.16em;color:#f2feff;
+    text-shadow:0 0 40px rgba(126,243,255,.45),0 0 110px rgba(60,150,255,.35)}
+  #title h1 em{font-style:normal;color:var(--cyan)}
+  #title .en{margin-top:16px;font-size:clamp(9px,1.1vw,12px);letter-spacing:.72em;color:rgba(126,243,255,.6)}
+  #title .line{width:min(430px,52vw);height:1px;margin:28px 0 24px;
+    background:linear-gradient(90deg,rgba(255,180,92,.5),var(--line),transparent)}
+  #title p{max-width:520px;margin:0 0 34px;font:400 13px/2 var(--sans);letter-spacing:.1em;
+    color:rgba(190,225,235,.72)}
+  #enter{pointer-events:auto;cursor:pointer;padding:15px 54px;font:600 12px/1 var(--mono);
+    letter-spacing:.44em;color:#eaffff;background:rgba(126,243,255,.07);
+    border:1px solid rgba(126,243,255,.5);transition:all .3s ease;
+    clip-path:polygon(12px 0,100% 0,100% calc(100% - 12px),calc(100% - 12px) 100%,0 100%,0 12px)}
+  #enter:hover{background:rgba(126,243,255,.2);box-shadow:0 0 50px rgba(126,243,255,.35);letter-spacing:.5em}
+  #title .foot{position:absolute;bottom:30px;left:50%;transform:translateX(-50%);white-space:nowrap;
+    font-size:9px;letter-spacing:.34em;color:rgba(126,243,255,.3)}
+
+  /* 启动加载 */
+  #boot{position:fixed;inset:0;z-index:30;background:#01050a;display:flex;align-items:center;
+    justify-content:center;flex-direction:column;gap:18px;transition:opacity .8s ease}
+  #boot .bt{font-size:10px;letter-spacing:.5em;color:var(--cyan-dim)}
+  #boot .bbar{width:220px;height:1px;background:rgba(126,243,255,.15);position:relative;overflow:hidden}
+  #boot .bbar i{position:absolute;inset:0;background:var(--cyan);transform-origin:left;
+    animation:bootload 1.5s ease-in-out infinite}
+  @keyframes bootload{0%{transform:scaleX(0)}60%{transform:scaleX(1)}100%{transform:scaleX(1);opacity:0}}
+
+  @media (max-width:900px){
+    #station-panel{width:238px;right:16px;top:96px}
+    #hud-brand{left:24px} #hud-telemetry{right:24px}
+    #radar-wrap{left:24px;bottom:26px} #radar,#radar-wrap{width:132px;height:132px}
+    #flight-panel{right:24px;bottom:26px;width:220px}
+    #module-list{max-height:28vh}
+  }
+
+  /* ── 任务线 ── */
+  #mission-panel{position:absolute;left:44px;top:118px;width:306px;padding:13px 15px 12px;
+    background:linear-gradient(160deg,rgba(4,14,22,.84),rgba(3,9,15,.58));
+    border:1px solid rgba(126,243,255,.14);border-left:2px solid rgba(126,243,255,.55);
+    backdrop-filter:blur(7px);opacity:0;transition:opacity .5s ease,transform .5s ease}
+  #mission-panel.on{opacity:1}
+  #mission-panel.off{display:none}
+  #mission-panel h3{margin:0;font:600 11px/1.4 var(--sans);letter-spacing:.24em;color:#e2fbff}
+  #mission-panel .m-en{font-size:8px;letter-spacing:.34em;color:var(--cyan-dim);margin-top:3px}
+  #mission-panel .m-dots{display:flex;gap:5px;margin:9px 0 9px}
+  #mission-panel .m-dots i{flex:1;height:2px;background:rgba(126,243,255,.16)}
+  #mission-panel .m-dots i.done{background:var(--cyan);box-shadow:0 0 9px rgba(126,243,255,.75)}
+  #mission-panel .m-dots i.now{background:var(--amber);box-shadow:0 0 10px rgba(255,180,92,.9)}
+  #mission-panel .m-title{font:600 13px/1.5 var(--sans);letter-spacing:.05em;color:#f3feff}
+  #mission-panel .m-desc{font-size:10px;line-height:1.72;color:#9fc4d0;font-family:var(--sans);margin-top:5px}
+  #mission-panel .m-foot{margin-top:9px;display:flex;justify-content:space-between;align-items:baseline;
+    font-size:9px;letter-spacing:.2em;color:var(--amber)}
+  #mission-panel .m-foot b{font-weight:400;font-size:11px;letter-spacing:.1em;color:#ffd8a3}
+  #mission-panel.mini .m-desc,#mission-panel.mini .m-dots{display:none}
+
+  #nav-arrow{position:absolute;left:0;top:0;width:30px;height:30px;margin:-15px 0 0 -15px;opacity:0;
+    transition:opacity .3s ease;pointer-events:none;filter:drop-shadow(0 0 6px rgba(255,180,92,.75))}
+  #nav-arrow.on{opacity:.92}
+
+  /* ── 空间站内部漫游 ── */
+  #interior-card{position:absolute;left:50%;bottom:112px;transform:translate(-50%,10px);width:372px;
+    padding:13px 16px 12px;background:linear-gradient(160deg,rgba(4,14,22,.88),rgba(3,9,15,.66));
+    border:1px solid rgba(126,243,255,.18);border-left:2px solid var(--cyan);
+    backdrop-filter:blur(8px);opacity:0;pointer-events:none;transition:.34s ease}
+  #interior-card.on{opacity:1;transform:translate(-50%,0)}
+  #interior-card .ic-id{font-size:9px;letter-spacing:.32em;color:var(--cyan-dim)}
+  #interior-card .ic-nm{font:600 14px/1.5 var(--sans);letter-spacing:.1em;color:#f0feff;margin:3px 0}
+  #interior-card .ic-desc{font-size:10px;line-height:1.75;color:#9fc4d0;font-family:var(--sans)}
+  #interior-card .ic-key{margin-top:8px;font-size:9px;letter-spacing:.2em;color:var(--amber)}
+
+  #cross{position:absolute;left:50%;top:50%;width:14px;height:14px;margin:-7px 0 0 -7px;opacity:0;
+    transition:opacity .3s ease}
+  #cross.on{opacity:.55}
+  #cross:before,#cross:after{content:'';position:absolute;background:var(--cyan)}
+  #cross:before{left:6px;top:0;width:1px;height:14px}
+  #cross:after{left:0;top:6px;width:14px;height:1px}
+
+  /* ── 行星展厅 ── */
+  #planet-panel{position:absolute;right:44px;top:118px;width:326px;padding:16px 17px 14px;
+    background:linear-gradient(160deg,rgba(4,14,22,.86),rgba(3,9,15,.6));
+    border:1px solid rgba(126,243,255,.14);border-right:2px solid rgba(126,243,255,.55);
+    backdrop-filter:blur(7px);opacity:0;transition:opacity .5s ease}
+  #planet-panel.on{opacity:1}
+  #planet-panel h2{margin:0;font:600 16px/1.3 var(--sans);letter-spacing:.1em;color:#f4feff}
+  #planet-panel .p-en{font-size:9px;letter-spacing:.34em;color:var(--cyan-dim);margin-top:4px}
+  #planet-panel .p-desc{font-size:10.5px;line-height:1.8;color:#a9cbd6;font-family:var(--sans);margin:10px 0 4px}
+  #planet-panel .p-stats{margin-top:8px;border-top:1px solid rgba(126,243,255,.12);padding-top:8px}
+  #planet-panel .p-stats .row{display:flex;justify-content:space-between;gap:16px;padding:3px 0;
+    font-size:9.5px;letter-spacing:.16em;color:var(--cyan-dim);line-height:1.6}
+  #planet-panel .p-stats .row span{flex:0 0 auto;white-space:nowrap}
+  #planet-panel .p-stats .row b{font-weight:400;color:#d8f7ff;letter-spacing:.04em;text-align:right}
+  #planet-tabs{display:flex;gap:6px;margin-top:12px}
+  #planet-tabs button{flex:1;padding:5px 0;font:inherit;font-size:9px;letter-spacing:.16em;cursor:pointer;
+    background:rgba(126,243,255,.05);border:1px solid rgba(126,243,255,.18);color:#9fc4d0;
+    font-family:var(--sans);transition:.25s}
+  #planet-tabs button:hover{background:rgba(126,243,255,.13);color:#e8fdff}
+  #planet-tabs button.on{border-color:var(--cyan);color:#eafeff;background:rgba(126,243,255,.16)}
+  #planet-tabs button img{display:none}
+  #planet-name{position:absolute;left:52px;bottom:66px;opacity:0;transition:opacity .6s ease;pointer-events:none}
+  #planet-name.on{opacity:1}
+  #planet-name .pn{font:300 46px/1 var(--sans);letter-spacing:.22em;color:#eafcff;
+    text-shadow:0 0 26px rgba(126,243,255,.4)}
+  #planet-name .pe{margin-top:8px;font-size:10px;letter-spacing:.52em;color:var(--cyan-dim)}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="vignette"></div>
+<div id="scanlines"></div>
+<div id="letterbox"><div class="bar top"></div><div class="bar bottom"></div></div>
+
+<div id="hud">
+  <i class="frame tl"></i><i class="frame tr"></i><i class="frame bl"></i><i class="frame br"></i>
+
+  <div id="hud-brand">
+    <b>DEEP SPACE ARK</b>
+    <span>深空方舟 · 太阳系轨道站 · SECTOR 07</span>
+  </div>
+
+  <div id="hud-telemetry">
+    <div class="row"><span class="k">SYS</span><span class="v" id="tel-sys">ONLINE</span></div>
+    <div class="row"><span class="k">MODE</span><span class="v" id="tel-mode">ORBIT</span></div>
+    <div class="row"><span class="k">FPS</span><span class="v" id="fps">--</span></div>
+  </div>
+
+  <div id="mode-badge"><i class="dot"></i><span class="txt" id="mode-text">空间站环绕视角</span></div>
+
+  <aside id="station-panel">
+    <h2>空间站结构</h2>
+    <div class="sub">STATION ASSEMBLY / 22 MODULES</div>
+    <div class="rule"></div>
+    <div id="module-list"></div>
+    <button class="btn amber" id="btn-explode">拆解空间站 · DISASSEMBLE</button>
+    <button class="btn ghost" id="btn-single">拆解选中模块</button>
+    <button class="btn" id="btn-launch">进入飞行模式 · LAUNCH</button>
+  </aside>
+
+  <div id="radar-wrap">
+    <canvas id="radar" width="372" height="372"></canvas>
+    <div class="cap">LOCAL SCAN · 轨道态势</div>
+  </div>
+
+  <div id="reticle">
+    <svg viewBox="0 0 120 120" fill="none" stroke="#7ef3ff" stroke-width="1">
+      <circle cx="60" cy="60" r="26" stroke-opacity=".35"/>
+      <circle cx="60" cy="60" r="2.4" fill="#7ef3ff" stroke="none"/>
+      <path d="M60 18v14M60 88v14M18 60h14M88 60h14" stroke-opacity=".8"/>
+      <path d="M36 36l-8-8M84 36l8-8M36 84l-8 8M84 84l8 8" stroke-opacity=".25"/>
+    </svg>
+  </div>
+
+  <div id="target-lock">
+    <div class="tn" id="tl-name">— — —</div>
+    <div class="td" id="tl-dist">NO TARGET</div>
+  </div>
+
+  <div id="flight-panel">
+    <div class="lbl"><span>VELOCITY</span><b id="f-speed">0.0 u/s</b></div>
+    <div class="bar"><i id="f-speedbar"></i></div>
+    <div class="lbl"><span>WARP CHARGE</span><b id="f-warp">100%</b></div>
+    <div class="bar amber"><i id="f-warpbar" style="width:100%"></i></div>
+    <div class="lbl"><span>THROTTLE</span><b id="f-throttle">0%</b></div>
+    <div class="bar"><i id="f-throttlebar"></i></div>
+  </div>
+
+  <div id="hints"></div>
+  <div id="toasts"></div>
+
+  <aside id="mission-panel">
+    <h3>任务线 · OPERATION</h3>
+    <div class="m-en" id="m-en">SOLAR SYSTEM PASSAGE</div>
+    <div class="m-dots" id="m-dots"></div>
+    <div class="m-title" id="m-title">待命</div>
+    <div class="m-desc" id="m-desc">等待指令。</div>
+    <div class="m-foot"><span id="m-step">STEP 0 / 6</span><b id="m-dist">— u</b></div>
+  </aside>
+
+  <svg id="nav-arrow" viewBox="0 0 30 30" fill="none">
+    <path d="M15 3l7.5 13h-5v11h-5V16h-5L15 3z" fill="#ffb45c" fill-opacity=".92" stroke="#ffd8a3" stroke-width=".8"/>
+  </svg>
+
+  <div id="cross"></div>
+  <aside id="interior-card">
+    <div class="ic-id" id="i-id">STATION INTERIOR</div>
+    <div class="ic-nm" id="i-nm">舱内</div>
+    <div class="ic-desc" id="i-desc">—</div>
+    <div class="ic-key" id="i-key">E 交互 · ESC 离舱</div>
+  </aside>
+
+  <aside id="planet-panel">
+    <h2 id="p-name">土星</h2>
+    <div class="p-en" id="p-en">SATURN</div>
+    <div class="p-desc" id="p-desc">—</div>
+    <div class="p-stats" id="p-stats"></div>
+    <div id="planet-tabs"></div>
+  </aside>
+  <div id="planet-name"><div class="pn" id="pn-cn">土星</div><div class="pe" id="pn-en">SATURN</div></div>
+  <div id="inspect">
+    <div class="in-id" id="in-id">MOD-00</div>
+    <div class="in-nm" id="in-nm">模块</div>
+    <div class="in-desc" id="in-desc">—</div>
+    <div class="in-stat" id="in-stat">—</div>
+  </div>
+</div>
+
+<div id="warp-flash"></div>
+<div id="fade"></div>
+
+<div id="title">
+  <div class="kick">A CINEMATIC SOLAR-SYSTEM FLIGHT EXPERIENCE</div>
+  <h1>深空<em>方舟</em></h1>
+  <div class="en">DEEP&nbsp;SPACE&nbsp;ARK</div>
+  <div class="line"></div>
+  <p>轨道空间站已抵达地月轨道。检查每一段舱体，拆解这座人类的方舟；<br>随后登舰，穿越太阳系，去看比科幻电影更辽阔的星河。</p>
+  <button id="enter">进 入 序 章</button>
+  <div class="foot">MOUSE DRAG 环绕 · CLICK 检视 · WASD 飞行 · SPACE 跃迁 · M 静音</div>
+</div>
+
+<div id="boot">
+  <div class="bt">INITIALIZING DEEP SPACE ARK</div>
+  <div class="bbar"><i></i></div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.js",
+    "three/addons/": "./vendor/addons/"
+  }
+}
+</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

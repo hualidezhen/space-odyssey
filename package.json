@@ -1,0 +1,10 @@
+{
+  "name": "deep-space-ark",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "深空方舟 · 星际空间站与太阳系漫游（three.js 离线版）",
+  "scripts": {
+    "start": "node tools/serve.mjs 5183"
+  }
+}
